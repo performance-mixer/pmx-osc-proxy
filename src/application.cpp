@@ -2,6 +2,10 @@
 
 #include <cstring>
 
+#include <iostream>
+#include <oscpp/print.hpp>
+#include <oscpp/server.hpp>
+
 #include <pipewire/loop.h>
 #include <pipewire/pipewire.h>
 
@@ -30,7 +34,36 @@ void application::Application::on_process(void *user_data,
         pw_buffer->buffer->datas[i].chunk->offset,
         pw_buffer->buffer->datas[i].chunk->size));
 
-    spa_debug_pod(0, nullptr, pod);
+    if (!pod)
+      continue;
+
+    if (!spa_pod_is_sequence(pod)) {
+      return;
+    }
+
+    auto sequence = reinterpret_cast<struct spa_pod_sequence *>(pod);
+
+    struct spa_pod_control *pod_control;
+    SPA_POD_SEQUENCE_FOREACH(sequence, pod_control) {
+
+      if (pod_control->type != SPA_CONTROL_OSC) {
+        return;
+      }
+
+      uint8_t *data = nullptr;
+      uint32_t length;
+      spa_pod_get_bytes(&pod_control->value, (const void **)&data, &length);
+
+      OSCPP::Server::Packet outer_packet(data, length);
+      OSCPP::Server::Bundle bundle(outer_packet);
+      OSCPP::Server::PacketStream packets(bundle.packets());
+      while (!packets.atEnd()) {
+        OSCPP::Server::Message msg(packets.next());
+        OSCPP::Server::ArgStream args(msg.args());
+        auto value = args.float32();
+        std::cout << msg << ": " << value << std::endl;
+      }
+    }
   }
 
   pw_filter_queue_buffer(this_pointer->osc_messages_port, pw_buffer);
@@ -63,7 +96,7 @@ application::Application::Application(int argc, char *argv[]) {
   osc_messages_port = static_cast<port *>(pw_filter_add_port(
       filter, PW_DIRECTION_INPUT, PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(port),
       pw_properties_new(PW_KEY_FORMAT_DSP, "8 bit raw midi", PW_KEY_PORT_NAME,
-                        "input_channels_port", NULL),
+                        "input", NULL),
       NULL, 0));
 }
 
